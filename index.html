@@ -311,7 +311,7 @@
       <button class="btn small ghost" id="signup-btn">Create test account</button>
     </div>
     <div class="status-msg" id="auth-status"></div>
-    <p style="font-size:11px; color:var(--text-dim); opacity:0.5; margin-top:16px;">build 2026-08-24-19:34 (OTP code fallback added to production sign-in — not applicable to this password-based testing build)</p>
+    <p style="font-size:11px; color:var(--text-dim); opacity:0.5; margin-top:16px;">build 2026-08-24-20:07 (Fixed OTP code input length — was hardcoded to 6, project uses 8)</p>
   </div>
 </div>
 
@@ -998,7 +998,7 @@ const SUPABASE_URL = 'https://tjcrpnwmaadfcvdbthaz.supabase.co';
 // instead of silently staying stale. version.json must be redeployed
 // alongside this file on every future update, with a matching bump to
 // APP_BUILD_VERSION below — these two must always move together.
-const APP_BUILD_VERSION = '2026-08-24-19:34';
+const APP_BUILD_VERSION = '2026-08-24-20:07';
 async function checkForUpdate() {
   try {
     const res = await fetch('./version.json', { cache: 'no-store' });
