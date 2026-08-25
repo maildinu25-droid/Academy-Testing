@@ -4,7 +4,7 @@
 <script>try{if(localStorage.getItem("academy_theme")==="light")document.documentElement.classList.add("light")}catch(e){}</script>
 <meta charset="UTF-8">
 <meta name="viewport" content="width=device-width, initial-scale=1.0">
-<title>ProCoach OS — Academy (Testing Build)</title>
+<title>ProCoach OS — Academy</title>
 <link rel="preconnect" href="https://fonts.googleapis.com">
 <link href="https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600;700;800&family=Sora:wght@600;700;800&display=swap" rel="stylesheet">
 <script src="https://cdn.jsdelivr.net/npm/@supabase/supabase-js@2"></script>
@@ -311,7 +311,7 @@
       <button class="btn small ghost" id="signup-btn">Create test account</button>
     </div>
     <div class="status-msg" id="auth-status"></div>
-    <p style="font-size:11px; color:var(--text-dim); opacity:0.5; margin-top:16px;">build 2026-08-25-08:29 (Boot log fully removed from both builds; player-profile restoration fix intact)</p>
+    <p style="font-size:11px; color:var(--text-dim); opacity:0.5; margin-top:16px;">build 2026-08-25-10:28 (Notification hook reverted — feature deferred, bulk attendance kept)</p>
   </div>
 </div>
 
@@ -1007,7 +1007,7 @@ const SUPABASE_URL = 'https://tjcrpnwmaadfcvdbthaz.supabase.co';
 // instead of silently staying stale. version.json must be redeployed
 // alongside this file on every future update, with a matching bump to
 // APP_BUILD_VERSION below — these two must always move together.
-const APP_BUILD_VERSION = '2026-08-25-08:29';
+const APP_BUILD_VERSION = '2026-08-25-10:28';
 async function checkForUpdate() {
   try {
     const res = await fetch('./version.json', { cache: 'no-store' });
@@ -3344,7 +3344,7 @@ function sessionFormHtml(s) {
       <label>Primary focus<select id="sheet-session-focus">${SESSION_FOCUS_OPTIONS.map(f => `<option ${s?.focus === f ? 'selected' : ''}>${f}</option>`).join('')}</select></label>
       <label class="full">Venue<input id="sheet-session-venue" value="${esc(s?.venue || '')}"></label>
     </div>
-    <label class="field-label" style="margin-top:10px;">Attendance</label>
+    <label class="field-label" style="margin-top:10px; display:flex; justify-content:space-between; align-items:center;">Attendance<button type="button" class="btn ghost" id="mark-all-present-btn" style="width:auto; padding:4px 10px; font-size:12px;">Mark All Present</button></label>
     <div id="sheet-session-attendees">${attendanceRowsHtml(teamPlayers, s?.attendance)}</div>
     <label class="full" style="margin-top:10px; display:block;">Objectives<textarea id="sheet-session-objectives">${esc(s?.objectives || '')}</textarea></label>
     <label class="full" style="display:block;">Warm-up / Preparation<textarea id="sheet-session-warmup">${esc(s?.warmup || '')}</textarea></label>
@@ -3365,6 +3365,9 @@ function openSessionForm(s) {
   document.getElementById('sheet-session-team').addEventListener('change', (e) => {
     const teamPlayers = cache.players.filter(p => p.team_id === e.target.value);
     document.getElementById('sheet-session-attendees').innerHTML = attendanceRowsHtml(teamPlayers, null);
+  });
+  document.getElementById('mark-all-present-btn').addEventListener('click', () => {
+    document.querySelectorAll('.attendance-status').forEach(sel => { sel.value = 'present'; });
   });
   document.getElementById('sheet-save-session-btn').addEventListener('click', async () => {
     const teamId = document.getElementById('sheet-session-team').value;
