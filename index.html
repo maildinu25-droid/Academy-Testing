@@ -314,7 +314,7 @@
       <button class="btn small ghost" id="signup-btn">Create test account</button>
     </div>
     <div class="status-msg" id="auth-status"></div>
-    <p style="font-size:11px; color:var(--text-dim); opacity:0.5; margin-top:16px;">build 2026-09-02-06:38 (Item 4 complete: Live Session compact detail line — all 3 tools done)</p>
+    <p style="font-size:11px; color:var(--text-dim); opacity:0.5; margin-top:16px;">build 2026-09-02-12:35 (Monthly Coaching: coach filter + assessments/dev reviews; Remove member action)</p>
   </div>
 </div>
 
@@ -912,6 +912,10 @@
           <label class="field-label">Player</label>
           <select id="report-player-filter"><option value="">All players</option></select>
         </div>
+        <div id="report-coach-row" style="display:none; margin-top:10px;">
+          <label class="field-label">Coach</label>
+          <select id="report-coach-filter"><option value="">All coaches</option></select>
+        </div>
         <div id="report-tournament-row" style="display:none; margin-top:10px;">
           <label class="field-label">Tournament</label>
           <select id="report-tournament-filter"></select>
@@ -1055,7 +1059,7 @@ const SUPABASE_URL = 'https://tjcrpnwmaadfcvdbthaz.supabase.co';
 // instead of silently staying stale. version.json must be redeployed
 // alongside this file on every future update, with a matching bump to
 // APP_BUILD_VERSION below — these two must always move together.
-const APP_BUILD_VERSION = '2026-09-02-06:38';
+const APP_BUILD_VERSION = '2026-09-02-12:35';
 async function checkForUpdate() {
   try {
     const res = await fetch('./version.json', { cache: 'no-store' });
@@ -4862,7 +4866,7 @@ const REPORT_CONTROLS = {
   'attendance-report': { daterange: true, team: true }, 'assessment-report': { daterange: true, player: true, team: true },
   'match-results': { daterange: true, team: true }, 'match-report': { match: true },
   'tournament-report': { tournament: true }, 'season-analytics': { season: true },
-  'session-report': { daterange: true, team: true }, 'monthly-coaching': { month: true, team: true },
+  'session-report': { daterange: true, team: true }, 'monthly-coaching': { month: true, team: true, coach: true },
   'coach-development': { daterange: true }, 'equipment-facilities': {}, 'fees-report': {},
 };
 function updateReportControlVisibility() {
@@ -4872,6 +4876,7 @@ function updateReportControlVisibility() {
   document.getElementById('report-team-row').style.display = cfg.team ? 'block' : 'none';
   document.getElementById('report-branch-row').style.display = cfg.team && cache.branches.length ? 'block' : 'none';
   document.getElementById('report-player-row').style.display = cfg.player ? 'block' : 'none';
+  document.getElementById('report-coach-row').style.display = cfg.coach ? 'block' : 'none';
   document.getElementById('report-tournament-row').style.display = cfg.tournament ? 'block' : 'none';
   document.getElementById('report-season-row').style.display = cfg.season ? 'block' : 'none';
   document.getElementById('report-match-row').style.display = cfg.match ? 'block' : 'none';
@@ -4894,6 +4899,12 @@ async function loadReportsPanel() {
   const { data: tournaments, error: tErr } = await supabase.from('tournaments').select('id, name').eq('org_id', currentOrgId).order('name');
   if (tErr) reportError(tErr, 'Reports (tournaments)');
   fillSelect(document.getElementById('report-tournament-filter'), tournaments || [], 'Select a tournament');
+
+  const { data: coachMembers, error: cmErr } = await supabase.from('memberships').select('user_id, role').eq('org_id', currentOrgId).eq('status', 'active').in('role', ['owner', 'admin', 'head_coach', 'assistant_coach']);
+  if (cmErr) reportError(cmErr, 'Reports (coaches)');
+  const coachNameByUser = await profilesByIds((coachMembers || []).map(m => m.user_id));
+  const coachOptions = (coachMembers || []).map(m => ({ id: m.user_id, name: coachNameByUser[m.user_id] || m.user_id }));
+  fillSelect(document.getElementById('report-coach-filter'), coachOptions, 'All coaches');
 
   const { data: seasons, error: sErr } = await supabase.from('seasons').select('id, name').eq('org_id', currentOrgId).order('name');
   if (sErr) reportError(sErr, 'Reports (seasons)');
@@ -5289,25 +5300,56 @@ async function runMonthlyCoachingReport() {
   const monthVal = document.getElementById('report-month').value || new Date().toISOString().slice(0, 7);
   const { from, to } = monthRange(monthVal);
   const teamIds = resolveReportTeamIds();
+  const coachId = document.getElementById('report-coach-filter').value || null;
 
   let sessionsQuery = supabase.from('sessions').select('date, title, session_type, duration, team_id').eq('org_id', currentOrgId).gte('date', from).lte('date', to);
   if (teamIds) sessionsQuery = sessionsQuery.in('team_id', teamIds);
-  const [sessionsRes, reflectionsRes] = await Promise.all([
-    sessionsQuery,
-    supabase.from('reflections').select('id', { count: 'exact', head: true }).eq('org_id', currentOrgId).gte('date', from).lte('date', to),
-  ]);
+  if (coachId) sessionsQuery = sessionsQuery.eq('created_by', coachId);
 
+  let reflectionsQuery = supabase.from('reflections').select('id', { count: 'exact', head: true }).eq('org_id', currentOrgId).gte('date', from).lte('date', to);
+  if (coachId) reflectionsQuery = reflectionsQuery.eq('coach_id', coachId);
+
+  let assessQuery = supabase.from('assessments').select('date, player_id, priority').eq('org_id', currentOrgId).gte('date', from).lte('date', to);
+  if (coachId) assessQuery = assessQuery.eq('assessed_by', coachId);
+
+  let plansQuery = supabase.from('development_plans').select('id, player_id').eq('org_id', currentOrgId);
+  if (coachId) plansQuery = plansQuery.eq('created_by', coachId);
+
+  const [sessionsRes, reflectionsRes, assessRes, plansRes] = await Promise.all([sessionsQuery, reflectionsQuery, assessQuery, plansQuery]);
+  if (assessRes.error) reportError(assessRes.error, 'Monthly Coaching (assessments)');
+  if (plansRes.error) reportError(plansRes.error, 'Monthly Coaching (development reviews)');
+
+  const planIds = (plansRes.data || []).map(p => p.id);
+  const planPlayerById = {};
+  for (const p of (plansRes.data || [])) planPlayerById[p.id] = p.player_id;
+  let progressRes = { data: [] };
+  if (planIds.length) {
+    progressRes = await supabase.from('development_progress').select('date, rating, plan_id').in('plan_id', planIds).gte('date', from).lte('date', to);
+    if (progressRes.error) reportError(progressRes.error, 'Monthly Coaching (development reviews)');
+  }
+
+  if (!cache.players.length) await loadPlayers();
   const sessions = sessionsRes.data || [];
+  const assessments = assessRes.data || [];
+  const progress = progressRes.data || [];
   const totalMinutes = sessions.reduce((sum, s) => sum + (Number(s.duration) || 0), 0);
   const label = new Date(monthVal + '-01T00:00:00').toLocaleDateString(undefined, { month: 'long', year: 'numeric' });
 
   let html = `<h3>${esc(label)}</h3><div class="stats-grid" style="margin:12px 0;">`;
   html += `<div class="stat-card"><div class="num">${sessions.length}</div><div class="label">Sessions</div></div>`;
   html += `<div class="stat-card"><div class="num">${Math.round(totalMinutes / 60 * 10) / 10}</div><div class="label">Coaching hours</div></div>`;
-  html += `<div class="stat-card"><div class="num">${reflectionsRes.count ?? 0}</div><div class="label">Reflections logged</div></div></div>`;
+  html += `<div class="stat-card"><div class="num">${reflectionsRes.count ?? 0}</div><div class="label">Reflections logged</div></div>`;
+  html += `<div class="stat-card"><div class="num">${assessments.length}</div><div class="label">Assessments done</div></div>`;
+  html += `<div class="stat-card"><div class="num">${progress.length}</div><div class="label">Development reviews</div></div></div>`;
   html += '<h3 style="margin-top:16px;">Sessions</h3>';
   if (!sessions.length) html += '<div class="empty-state">None this month.</div>';
   else for (const s of sessions) html += `<div class="list-item"><span>${esc(s.title || '(untitled)')} <span style="color:var(--text-dim); font-size:12px;">· ${esc(s.date)} · ${esc(nameById(cache.teams, s.team_id))}</span></span><span class="role-tag">${SESSION_TYPE_LABELS[s.session_type] || '—'}</span></div>`;
+  html += '<h3 style="margin-top:16px;">Assessments done</h3>';
+  if (!assessments.length) html += '<div class="empty-state">None this month.</div>';
+  else for (const a of assessments) html += `<div class="list-item"><span>${esc(nameById(cache.players, a.player_id))}</span><span class="role-tag">${esc(a.date)}${a.priority ? ' · ' + esc(a.priority) : ''}</span></div>`;
+  html += '<h3 style="margin-top:16px;">Development reviews</h3>';
+  if (!progress.length) html += '<div class="empty-state">None this month.</div>';
+  else for (const p of progress) html += `<div class="list-item"><span>${esc(nameById(cache.players, planPlayerById[p.plan_id]))}</span><span class="role-tag">${esc(p.date)}${p.rating != null ? ' · Rated ' + p.rating : ''}</span></div>`;
   outputEl.innerHTML = html;
 }
 
@@ -6767,6 +6809,23 @@ async function loadMembers() {
     top.style.display = 'flex'; top.style.justifyContent = 'space-between';
     top.innerHTML = `<span>${esc(label)}</span><span class="role-tag">${esc(m.role)} · ${esc(m.status)}</span>`;
     row.appendChild(top);
+
+    if (m.role !== 'owner') {
+      const removeBtn = document.createElement('button');
+      removeBtn.className = 'link-btn danger';
+      removeBtn.style.alignSelf = 'flex-start';
+      removeBtn.style.marginTop = '4px';
+      removeBtn.textContent = 'Remove from organization';
+      removeBtn.addEventListener('click', async () => {
+        if (!confirmDelete(label)) return;
+        removeBtn.disabled = true;
+        const { error: rmErr } = await supabase.from('memberships').delete().eq('id', m.id);
+        if (rmErr) { showToast(rmErr.message, 'error'); removeBtn.disabled = false; return; }
+        showToast('Removed.', 'ok');
+        loadMembers();
+      });
+      row.appendChild(removeBtn);
+    }
 
     if (m.role === 'assistant_coach' && m.status === 'active' && cache.teams.length) {
       const teamsDiv = document.createElement('div');
