@@ -314,7 +314,7 @@
       <button class="btn small ghost" id="signup-btn">Create test account</button>
     </div>
     <div class="status-msg" id="auth-status"></div>
-    <p style="font-size:11px; color:var(--text-dim); opacity:0.5; margin-top:16px;">build 2026-09-02-12:35 (Monthly Coaching: coach filter + assessments/dev reviews; Remove member action)</p>
+    <p style="font-size:11px; color:var(--text-dim); opacity:0.5; margin-top:16px;">build 2026-09-02-15:48 (Item 2: coach text presets + objective category, Session Planner)</p>
   </div>
 </div>
 
@@ -1059,7 +1059,7 @@ const SUPABASE_URL = 'https://tjcrpnwmaadfcvdbthaz.supabase.co';
 // instead of silently staying stale. version.json must be redeployed
 // alongside this file on every future update, with a matching bump to
 // APP_BUILD_VERSION below — these two must always move together.
-const APP_BUILD_VERSION = '2026-09-02-12:35';
+const APP_BUILD_VERSION = '2026-09-02-15:48';
 async function checkForUpdate() {
   try {
     const res = await fetch('./version.json', { cache: 'no-store' });
@@ -1537,6 +1537,55 @@ function listRow(mainHtml, tagText, onEdit, onDelete) {
 }
 
 function confirmDelete(label) { return confirm(`Delete ${label}? This can't be undone.`); }
+
+// ---------- Coach text presets: reusable "insert saved text instead of typing" picker ----------
+// Attached per-field via a field_key (e.g. "session_objectives"). Private presets are
+// visible only to their creator; shared ones are visible to every coach in the org —
+// enforced by RLS, not just hidden client-side.
+let presetsCache = null; // { field_key: [{id, label, content, visibility, created_by}, ...] }
+async function loadPresetsCache() {
+  const { data, error } = await supabase.from('text_presets').select('id, field_key, label, content, visibility, created_by').eq('org_id', currentOrgId);
+  if (error) { reportError(error, 'Presets'); presetsCache = {}; return; }
+  presetsCache = {};
+  for (const p of (data || [])) (presetsCache[p.field_key] ||= []).push(p);
+}
+function presetOptionsHtml(fieldKey) {
+  const list = (presetsCache && presetsCache[fieldKey]) || [];
+  return '<option value="">— Insert saved preset —</option>' + list.map(p => `<option value="${esc(p.id)}">${esc(p.label)}${p.visibility === 'shared' ? ' (shared)' : ''}</option>`).join('');
+}
+function presetRowHtml(fieldKey, textareaId) {
+  return `<div class="preset-row" data-field-key="${esc(fieldKey)}" data-target="${esc(textareaId)}" style="display:flex; gap:8px; align-items:center; margin:4px 0;">
+    <select class="preset-select" style="flex:1; min-width:0; font-size:12px;">${presetOptionsHtml(fieldKey)}</select>
+    <button type="button" class="link-btn save-preset-btn" style="white-space:nowrap;">+ Save preset</button>
+  </div>`;
+}
+function attachPresetHandlers(container) {
+  container.querySelectorAll('.preset-row').forEach(row => {
+    const fieldKey = row.dataset.fieldKey;
+    const textarea = document.getElementById(row.dataset.target);
+    const select = row.querySelector('.preset-select');
+    select.addEventListener('change', () => {
+      if (!select.value || !textarea) return;
+      const preset = (presetsCache[fieldKey] || []).find(p => p.id === select.value);
+      if (preset) textarea.value = preset.content;
+      select.value = '';
+    });
+    row.querySelector('.save-preset-btn').addEventListener('click', async () => {
+      if (!textarea || !textarea.value.trim()) { showToast('Nothing to save — write something first.', 'error'); return; }
+      const label = prompt('Name this preset (e.g. "U14 pre-season warmup"):');
+      if (!label || !label.trim()) return;
+      const shared = confirm('Share this with every coach at the academy?\n\nOK = shared with everyone\nCancel = private, just for you');
+      const { error } = await supabase.from('text_presets').insert({
+        org_id: currentOrgId, created_by: session.user.id, field_key: fieldKey,
+        label: label.trim(), content: textarea.value, visibility: shared ? 'shared' : 'private',
+      });
+      if (error) { showToast(error.message, 'error'); return; }
+      showToast('Preset saved.', 'ok');
+      await loadPresetsCache();
+      select.innerHTML = presetOptionsHtml(fieldKey);
+    });
+  });
+}
 
 const PAGE_SIZE = 20;
 // Client-side "Show more" over an already-fetched array. Deliberately not a
@@ -3332,6 +3381,7 @@ document.getElementById('save-drill-btn').addEventListener('click', async () => 
 // ============================================================
 const SESSION_TYPE_LABELS = { team: 'Team', player: '1-on-1', custom: 'Group' };
 const SESSION_FOCUS_OPTIONS = ['Batting', 'Bowling', 'Fielding', 'Wicketkeeping', 'Team', 'Fitness'];
+const OBJECTIVE_CATEGORIES = ['Technical', 'Tactical', 'Physical', 'Mental', 'Teamwork & Communication', 'Match Preparation', 'Specific Skill Development'];
 let sessionQuery = '', sessionTeamFilterVal = '';
 let sessionReflectedIds = new Set();
 
@@ -3412,22 +3462,25 @@ function sessionFormHtml(s) {
     </div>
     <label class="field-label" style="margin-top:10px; display:flex; justify-content:space-between; align-items:center;">Attendance<button type="button" class="btn ghost" id="mark-all-present-btn" style="width:auto; padding:4px 10px; font-size:12px;">Mark All Present</button></label>
     <div id="sheet-session-attendees">${attendanceRowsHtml(teamPlayers, s?.attendance)}</div>
-    <label class="full" style="margin-top:10px; display:block;">Objectives<textarea id="sheet-session-objectives">${esc(s?.objectives || '')}</textarea></label>
-    <label class="full" style="display:block;">Warm-up / Preparation<textarea id="sheet-session-warmup">${esc(s?.warmup || '')}</textarea></label>
-    <label class="full" style="display:block;">Main Skill Block<textarea id="sheet-session-main">${esc(s?.main || '')}</textarea></label>
+    <label class="full" style="margin-top:10px; display:block;">Objective category<select id="sheet-session-objcategory"><option value="">— None —</option>${OBJECTIVE_CATEGORIES.map(c => `<option ${s?.objective_category === c ? 'selected' : ''}>${c}</option>`).join('')}</select></label>
+    <label class="full" style="display:block;">Objectives</label>${presetRowHtml('session_objectives', 'sheet-session-objectives')}<textarea id="sheet-session-objectives">${esc(s?.objectives || '')}</textarea>
+    <label class="full" style="display:block;">Warm-up / Preparation</label>${presetRowHtml('session_warmup', 'sheet-session-warmup')}<textarea id="sheet-session-warmup">${esc(s?.warmup || '')}</textarea>
+    <label class="full" style="display:block;">Main Skill Block</label>${presetRowHtml('session_main', 'sheet-session-main')}<textarea id="sheet-session-main">${esc(s?.main || '')}</textarea>
     <label class="field-label">Main activity drills (optional)</label>
     <select id="sheet-session-main-drills" multiple>${cache.drills.map(d => `<option value="${d.id}" ${(s?.main_drill_ids || []).includes(d.id) ? 'selected' : ''}>${esc(d.name)}</option>`).join('')}</select>
-    <label class="full" style="display:block; margin-top:10px;">Competitive / Game Block<textarea id="sheet-session-game">${esc(s?.game || '')}</textarea></label>
+    <label class="full" style="display:block; margin-top:10px;">Competitive / Game Block</label>${presetRowHtml('session_game', 'sheet-session-game')}<textarea id="sheet-session-game">${esc(s?.game || '')}</textarea>
     <label class="field-label">Game drills (optional)</label>
     <select id="sheet-session-game-drills" multiple>${cache.drills.map(d => `<option value="${d.id}" ${(s?.game_drill_ids || []).includes(d.id) ? 'selected' : ''}>${esc(d.name)}</option>`).join('')}</select>
-    <label class="full" style="display:block; margin-top:10px;">Coaching Cues<textarea id="sheet-session-cues">${esc(s?.cues || '')}</textarea></label>
-    <label class="full" style="display:block;">Success Criteria<textarea id="sheet-session-success">${esc(s?.success || '')}</textarea></label>
+    <label class="full" style="display:block; margin-top:10px;">Coaching Cues</label>${presetRowHtml('session_cues', 'sheet-session-cues')}<textarea id="sheet-session-cues">${esc(s?.cues || '')}</textarea>
+    <label class="full" style="display:block;">Success Criteria</label>${presetRowHtml('session_success', 'sheet-session-success')}<textarea id="sheet-session-success">${esc(s?.success || '')}</textarea>
     <button class="btn primary" id="sheet-save-session-btn" style="margin-top:14px; width:auto;">${s?.id ? 'Save changes' : 'Save Session'}</button>`;
 }
-function openSessionForm(s) {
+async function openSessionForm(s) {
   if (!cache.teams.length) { showToast('Add a team before creating a session.', 'error'); return; }
   editing.sessions = s?.id || null;
+  await loadPresetsCache();
   openSheet(sessionFormHtml(s));
+  attachPresetHandlers(document);
   document.getElementById('sheet-session-team').addEventListener('change', (e) => {
     const teamPlayers = cache.players.filter(p => p.team_id === e.target.value);
     document.getElementById('sheet-session-attendees').innerHTML = attendanceRowsHtml(teamPlayers, null);
@@ -3450,6 +3503,7 @@ function openSessionForm(s) {
       duration: document.getElementById('sheet-session-duration').value || null,
       venue: document.getElementById('sheet-session-venue').value.trim() || null,
       focus: document.getElementById('sheet-session-focus').value.trim() || null,
+      objective_category: document.getElementById('sheet-session-objcategory').value || null,
       objectives: document.getElementById('sheet-session-objectives').value.trim() || null,
       warmup: document.getElementById('sheet-session-warmup').value.trim() || null,
       main: document.getElementById('sheet-session-main').value.trim() || null,
@@ -5567,15 +5621,18 @@ async function runPlayerDevelopmentReport() {
       const values = Object.values(latest.ratings).filter(v => typeof v === 'number');
       if (values.length) avgRating = (values.reduce((a, b) => a + b, 0) / values.length).toFixed(1);
     }
-    return { player: p.name, team: nameById(cache.teams, p.team_id), lastAssessed: latest?.date || null, avgRating, priority: latest?.priority || null, activePlans: plansRes.count ?? 0 };
+    return { id: p.id, player: p.name, team: nameById(cache.teams, p.team_id), lastAssessed: latest?.date || null, avgRating, priority: latest?.priority || null, activePlans: plansRes.count ?? 0 };
   }));
 
   outputEl.innerHTML = rows.map(r => {
     const detail = r.lastAssessed
       ? `Last assessed ${esc(r.lastAssessed)}${r.avgRating ? ' · avg ' + r.avgRating + '/10' : ''}${r.priority ? ' · focus: ' + esc(r.priority) : ''}${r.activePlans ? ' · ' + r.activePlans + ' active plan' + (r.activePlans === 1 ? '' : 's') : ''}`
       : (r.activePlans ? `No assessments yet · ${r.activePlans} active plan${r.activePlans === 1 ? '' : 's'}` : 'No assessments yet');
-    return `<div class="list-item"><span>${esc(r.player)} <span style="color:var(--text-dim); font-size:12px;">· ${esc(r.team)}</span></span><span class="role-tag">${detail}</span></div>`;
+    return `<div class="list-item" data-player-id="${esc(r.id)}" style="cursor:pointer;"><span>${esc(r.player)} <span style="color:var(--text-dim); font-size:12px;">· ${esc(r.team)}</span></span><span class="role-tag">${detail}</span></div>`;
   }).join('');
+  outputEl.querySelectorAll('[data-player-id]').forEach(row => {
+    row.onclick = () => openPlayerProfile(row.dataset.playerId);
+  });
 }
 
 async function runAnalysisSummaryReport() {
