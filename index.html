@@ -315,7 +315,7 @@
       <button class="btn small ghost" id="signup-btn">Create test account</button>
     </div>
     <div class="status-msg" id="auth-status"></div>
-    <p style="font-size:11px; color:var(--text-dim); opacity:0.5; margin-top:16px;">build 2026-09-03-04:40 (Facility usage & rotation report — net facility tracker complete)</p>
+    <p style="font-size:11px; color:var(--text-dim); opacity:0.5; margin-top:16px;">build 2026-09-03-16:02 (FIX: player/parent portal ambiguous FK embed — real pre-existing bug)</p>
   </div>
 </div>
 
@@ -1064,7 +1064,7 @@ const SUPABASE_URL = 'https://tjcrpnwmaadfcvdbthaz.supabase.co';
 // instead of silently staying stale. version.json must be redeployed
 // alongside this file on every future update, with a matching bump to
 // APP_BUILD_VERSION below — these two must always move together.
-const APP_BUILD_VERSION = '2026-09-03-04:40';
+const APP_BUILD_VERSION = '2026-09-03-16:02';
 async function checkForUpdate() {
   try {
     const res = await fetch('./version.json', { cache: 'no-store' });
@@ -4811,12 +4811,12 @@ async function loadSmartAlerts() {
 async function fetchMyPortalPlayers() {
   const role = currentRole();
   if (role === 'player') {
-    const { data, error } = await supabase.from('players').select('*, teams(name, branches(name))').eq('linked_user_id', session.user.id).eq('org_id', currentOrgId);
+    const { data, error } = await supabase.from('players').select('*, teams!players_team_id_fkey(name, branches(name))').eq('linked_user_id', session.user.id).eq('org_id', currentOrgId);
     if (error) { reportError(error, 'My Portal'); return []; }
     return data || [];
   }
   if (role === 'parent') {
-    const { data, error } = await supabase.from('player_guardians').select('players(*, teams(name, branches(name)))').eq('user_id', session.user.id).eq('org_id', currentOrgId);
+    const { data, error } = await supabase.from('player_guardians').select('players(*, teams!players_team_id_fkey(name, branches(name)))').eq('user_id', session.user.id).eq('org_id', currentOrgId);
     if (error) { reportError(error, 'My Portal'); return []; }
     return (data || []).map(d => d.players).filter(Boolean);
   }
