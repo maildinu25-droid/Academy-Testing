@@ -327,7 +327,7 @@
       <button class="btn small ghost" id="signup-btn">Create test account</button>
     </div>
     <div class="status-msg" id="auth-status"></div>
-    <p style="font-size:11px; color:var(--text-dim); opacity:0.5; margin-top:16px;">build 2026-09-07-06:56 (Manual org suspension: Platform Admin, independent of subscription status)</p>
+    <p style="font-size:11px; color:var(--text-dim); opacity:0.5; margin-top:16px;">build 2026-09-08-05:29 (Facility booking approval workflow: notifications both ways, rejection reasons, race-condition guard)</p>
   </div>
 </div>
 
@@ -747,12 +747,29 @@
         <select id="facility-branch" style="display:none;"><option value="">All branches</option></select>
         <textarea id="facility-availability" placeholder="Availability notes (optional)"></textarea>
         <textarea id="facility-maintenance" placeholder="Maintenance notes (optional)"></textarea>
+        <label class="field-label">Operating hours <span class="muted" style="font-weight:400;">(needed for player/parent facility booking — leave blank for no fixed hours)</span></label>
+        <div class="form-row">
+          <input type="time" id="facility-open-time">
+          <input type="time" id="facility-close-time">
+        </div>
+        <label class="field-label">Closed on</label>
+        <div id="facility-closed-days" style="display:flex; gap:6px; flex-wrap:wrap; margin-bottom:8px;">
+          <label style="display:flex; align-items:center; gap:4px; font-size:12px; font-weight:400;"><input type="checkbox" value="Sunday" class="facility-closed-day-cb">Sun</label>
+          <label style="display:flex; align-items:center; gap:4px; font-size:12px; font-weight:400;"><input type="checkbox" value="Monday" class="facility-closed-day-cb">Mon</label>
+          <label style="display:flex; align-items:center; gap:4px; font-size:12px; font-weight:400;"><input type="checkbox" value="Tuesday" class="facility-closed-day-cb">Tue</label>
+          <label style="display:flex; align-items:center; gap:4px; font-size:12px; font-weight:400;"><input type="checkbox" value="Wednesday" class="facility-closed-day-cb">Wed</label>
+          <label style="display:flex; align-items:center; gap:4px; font-size:12px; font-weight:400;"><input type="checkbox" value="Thursday" class="facility-closed-day-cb">Thu</label>
+          <label style="display:flex; align-items:center; gap:4px; font-size:12px; font-weight:400;"><input type="checkbox" value="Friday" class="facility-closed-day-cb">Fri</label>
+          <label style="display:flex; align-items:center; gap:4px; font-size:12px; font-weight:400;"><input type="checkbox" value="Saturday" class="facility-closed-day-cb">Sat</label>
+        </div>
         <div class="panelToolbar" style="margin-bottom:0;">
           <button class="btn small" id="save-facility-btn">Add facility</button>
           <button class="btn small ghost" id="cancel-facility-btn" style="display:none;">Cancel</button>
         </div>
       </div>
       <div id="facilities-list"></div>
+      <div class="sectionHeading" style="margin-top:20px;">Facility Booking Requests</div>
+      <div id="facility-bookings-list"></div>
     </div>
 
     <!-- FEES (fee tracking / recording only — no payment processing) -->
@@ -1080,7 +1097,7 @@ const SUPABASE_URL = 'https://tjcrpnwmaadfcvdbthaz.supabase.co';
 // instead of silently staying stale. version.json must be redeployed
 // alongside this file on every future update, with a matching bump to
 // APP_BUILD_VERSION below — these two must always move together.
-const APP_BUILD_VERSION = '2026-09-07-06:56';
+const APP_BUILD_VERSION = '2026-09-08-05:29';
 async function checkForUpdate() {
   try {
     const res = await fetch('./version.json', { cache: 'no-store' });
@@ -2455,6 +2472,16 @@ async function notifyPlayerCircle(playerId, title, body) {
   ]);
   for (const userId of recipientIds) {
     notifyUser(userId, title, body, 'panel-my-dashboard');
+  }
+}
+// Notifies everyone who can actually act on something — head_coach and above,
+// matching is_org_coach_or_above's own threshold. Not assistant_coach, since
+// they can't approve/reject a facility booking anyway.
+async function notifyOrgCoaches(title, body, linkPanel) {
+  const { data: members } = await supabase.from('memberships').select('user_id')
+    .eq('org_id', currentOrgId).eq('status', 'active').in('role', ['head_coach', 'admin', 'owner']);
+  for (const m of (members || [])) {
+    notifyUser(m.user_id, title, body, linkPanel || null);
   }
 }
 ['dashboard-header', 'dashboard-bento'].forEach(id => {
@@ -4072,6 +4099,32 @@ function renderMatchesList() {
   if (!list.length) { listEl.innerHTML = '<div class="empty-state">No matches match.</div>'; return; }
   renderPagedList(listEl, list, matchCardHtml, 'No matches match.');
 }
+async function printMatchScorecard(m) {
+  const battingReview = Array.isArray(m.batting_review) ? m.batting_review : [];
+  const bowlingReview = Array.isArray(m.bowling_review) ? m.bowling_review : [];
+  const teamName = nameById(cache.teams, m.team_id) || 'My Team';
+  let html = `<div class="entityCard"><b>${esc(teamName)} vs ${esc(m.opponent || 'Opposition')}</b>
+    <div class="muted">${esc(m.date || '')}${m.venue ? ' · ' + esc(m.venue) : ''}${m.format ? ' · ' + esc(m.format) : ''}</div>
+    <p style="margin-top:8px;">${esc(m.result || 'No result recorded')}</p></div>`;
+  if (battingReview.length) {
+    html += '<h3 style="margin-top:16px;">Batting</h3><table style="width:100%; border-collapse:collapse; font-size:13px;">';
+    html += '<tr style="border-bottom:1px solid #ccc;"><th style="text-align:left; padding:4px;">Player</th><th style="text-align:right; padding:4px;">Runs</th><th style="text-align:right; padding:4px;">Balls</th><th style="text-align:right; padding:4px;">4s</th><th style="text-align:right; padding:4px;">6s</th><th style="text-align:left; padding:4px;">Dismissal</th></tr>';
+    for (const b of battingReview) {
+      html += `<tr style="border-bottom:1px solid #eee;"><td style="padding:4px;">${esc(nameById(cache.players, b.playerId))}</td><td style="text-align:right; padding:4px;">${esc(b.runs ?? '—')}</td><td style="text-align:right; padding:4px;">${esc(b.balls ?? '—')}</td><td style="text-align:right; padding:4px;">${esc(b.fours ?? '—')}</td><td style="text-align:right; padding:4px;">${esc(b.sixes ?? '—')}</td><td style="padding:4px;">${esc(b.dismissal || 'not out')}</td></tr>`;
+    }
+    html += '</table>';
+  }
+  if (bowlingReview.length) {
+    html += '<h3 style="margin-top:16px;">Bowling</h3><table style="width:100%; border-collapse:collapse; font-size:13px;">';
+    html += '<tr style="border-bottom:1px solid #ccc;"><th style="text-align:left; padding:4px;">Player</th><th style="text-align:right; padding:4px;">Overs</th><th style="text-align:right; padding:4px;">Maidens</th><th style="text-align:right; padding:4px;">Runs</th><th style="text-align:right; padding:4px;">Wickets</th></tr>';
+    for (const bl of bowlingReview) {
+      html += `<tr style="border-bottom:1px solid #eee;"><td style="padding:4px;">${esc(nameById(cache.players, bl.playerId))}</td><td style="text-align:right; padding:4px;">${esc(bl.overs ?? '—')}</td><td style="text-align:right; padding:4px;">${esc(bl.maidens ?? '—')}</td><td style="text-align:right; padding:4px;">${esc(bl.runsConceded ?? '—')}</td><td style="text-align:right; padding:4px;">${esc(bl.wickets ?? '—')}</td></tr>`;
+    }
+    html += '</table>';
+  }
+  if (!battingReview.length && !bowlingReview.length) html += '<div class="empty-state" style="margin-top:16px;">No detailed scorecard logged for this match.</div>';
+  await printWithBranding(`Match Scorecard — vs ${m.opponent || 'Opposition'}`, html);
+}
 function matchCardHtml(m) {
   const outcome = matchResultOutcome(m);
   const battingReview = Array.isArray(m.batting_review) ? m.batting_review : [];
@@ -4094,7 +4147,9 @@ function matchCardHtml(m) {
   editBtn.onclick = () => openMatchForm(m);
   const delBtn = document.createElement('button'); delBtn.type = 'button'; delBtn.className = 'btn danger'; delBtn.textContent = 'Delete';
   delBtn.onclick = async () => { if (!confirmDelete('this match')) return; await supabase.from('matches').delete().eq('id', m.id); loadMatches(); };
-  toolbar.append(dupBtn, editBtn, delBtn);
+  const printBtn = document.createElement('button'); printBtn.type = 'button'; printBtn.className = 'btn ghost'; printBtn.textContent = 'Print';
+  printBtn.onclick = () => printMatchScorecard(m);
+  toolbar.append(dupBtn, editBtn, printBtn, delBtn);
   return card;
 }
 
@@ -5135,6 +5190,7 @@ async function renderMyDashboardFor(player) {
   const pastMatchesPlayed = (pastMatchesRes.data || []).filter(m => (m.playing_xi || []).includes(player.id));
 
   let html = `<div class="entityCard"><b>${esc(player.name)}</b><div class="muted">${esc(player.teams?.name || '—')}${player.teams?.branches?.name ? ' · ' + esc(player.teams.branches.name) : ''}${player.role ? ' · ' + esc(player.role) : ''}</div></div>`;
+  html += `<button type="button" class="btn primary" id="open-facility-booking-btn" style="margin:10px 0; width:auto;">📅 Book a Facility</button>`;
   const announcements = announceRes.data || [];
   if (announcements.length) {
     html += '<div class="sectionHeading">Announcements</div>';
@@ -5166,9 +5222,99 @@ async function renderMyDashboardFor(player) {
     return `<div class="list-item"><span>vs ${esc(m.opponent || '—')} <span class="muted">${esc(summary)}</span></span><span class="role-tag">${esc(m.date)}</span></div>`;
   }).join('');
 
+  const { data: myBookings } = await supabase.from('facility_bookings')
+    .select('id, date, start_time, end_time, status, rejection_reason, facilities(name)')
+    .eq('requested_by', session.user.id).gte('date', today).order('date').order('start_time');
+  html += '<div class="sectionHeading">My facility bookings</div>';
+  if (!myBookings || !myBookings.length) html += '<div class="empty-state">No upcoming bookings.</div>';
+  else html += myBookings.map(b => `<div class="list-item" data-my-booking-id="${b.status === 'pending' ? esc(b.id) : ''}"><span>${esc(b.facilities?.name || 'Facility')} <span class="muted">${esc(b.start_time?.slice(0, 5))}–${esc(b.end_time?.slice(0, 5))}</span>${b.status === 'rejected' && b.rejection_reason ? `<div class="muted">${esc(b.rejection_reason)}</div>` : ''}</span><span class="role-tag" style="${b.status === 'rejected' || b.status === 'cancelled' ? 'background:var(--danger-tint); color:var(--danger);' : ''}">${esc(b.status)} · ${esc(b.date)}${b.status === 'pending' ? ' · tap to cancel' : ''}</span></div>`).join('');
+
   contentEl.innerHTML = html;
+
+  document.getElementById('open-facility-booking-btn').addEventListener('click', () => openFacilityBookingForm(player));
+  contentEl.querySelectorAll('[data-my-booking-id]').forEach(el => {
+    el.style.cursor = 'pointer';
+    el.addEventListener('click', async () => {
+      if (!confirm('Cancel this booking request?')) return;
+      const { error } = await supabase.from('facility_bookings').update({ status: 'cancelled' }).eq('id', el.dataset.myBookingId);
+      if (error) { showToast(error.message, 'error'); return; }
+      showToast('Cancelled.', 'ok');
+      renderMyDashboardFor(player);
+    });
+  });
 }
 
+async function openFacilityBookingForm(player) {
+  const { data: facilities, error: facErr } = await supabase.from('facilities').select('id, name, open_time, close_time, closed_days').eq('org_id', currentOrgId).order('name');
+  if (facErr || !facilities?.length) { showToast('No facilities available to book yet.', 'error'); return; }
+
+  const tomorrow = new Date(Date.now() + 86400000).toISOString().slice(0, 10);
+  openSheet(sheetHead('Book a Facility') + `
+    <div class="formgrid">
+      <label class="full">Facility<select id="booking-facility">${facilities.map(f => `<option value="${f.id}">${esc(f.name)}</option>`).join('')}</select></label>
+      <label class="full">Date<input type="date" id="booking-date" value="${tomorrow}" min="${new Date().toISOString().slice(0, 10)}"></label>
+    </div>
+    <div id="booking-existing" style="margin:10px 0;"></div>
+    <div class="formgrid">
+      <label>Start time<input type="time" id="booking-start"></label>
+      <label>End time<input type="time" id="booking-end"></label>
+      <label class="full">Purpose <span class="muted" style="font-weight:400;">(optional)</span><textarea id="booking-purpose" placeholder="e.g. Personal net practice"></textarea></label>
+    </div>
+    <div class="status-msg" id="booking-status"></div>
+    <button class="btn primary" id="booking-submit-btn" style="margin-top:10px; width:auto;">Request booking</button>`);
+
+  async function refreshExisting() {
+    const facilityId = document.getElementById('booking-facility').value;
+    const date = document.getElementById('booking-date').value;
+    const existingEl = document.getElementById('booking-existing');
+    if (!date) { existingEl.innerHTML = ''; return; }
+    const facility = facilities.find(f => f.id === facilityId);
+    const dayName = new Date(date + 'T00:00:00').toLocaleDateString('en-US', { weekday: 'long' });
+    if (facility.closed_days?.includes(dayName)) { existingEl.innerHTML = `<div class="empty-state">Closed on ${esc(dayName)}s.</div>`; return; }
+    const hoursNote = (facility.open_time || facility.close_time) ? `Open ${esc((facility.open_time || '00:00').slice(0, 5))}–${esc((facility.close_time || '23:59').slice(0, 5))}` : 'No fixed hours set';
+    const [bookingsRes, sessionsRes] = await Promise.all([
+      supabase.from('facility_bookings').select('start_time, end_time').eq('facility_id', facilityId).eq('date', date).in('status', ['pending', 'confirmed']),
+      supabase.from('sessions').select('time, duration').eq('facility_id', facilityId).eq('date', date).not('time', 'is', null),
+    ]);
+    const taken = [
+      ...(bookingsRes.data || []).map(b => `${b.start_time.slice(0, 5)}–${b.end_time.slice(0, 5)} (requested)`),
+      ...(sessionsRes.data || []).map(s => {
+        const [h, m] = s.time.split(':').map(Number);
+        const endMins = h * 60 + m + (s.duration || 60);
+        const endStr = `${String(Math.floor(endMins / 60) % 24).padStart(2, '0')}:${String(endMins % 60).padStart(2, '0')}`;
+        return `${s.time.slice(0, 5)}–${endStr} (team session)`;
+      }),
+    ];
+    existingEl.innerHTML = `<div class="muted">${hoursNote}</div>` + (taken.length ? taken.map(t => `<div class="list-item"><span>${esc(t)}</span></div>`).join('') : '<div class="empty-state">Nothing booked yet that day.</div>');
+  }
+  document.getElementById('booking-facility').addEventListener('change', refreshExisting);
+  document.getElementById('booking-date').addEventListener('change', refreshExisting);
+  refreshExisting();
+
+  document.getElementById('booking-submit-btn').addEventListener('click', async () => {
+    const facilityId = document.getElementById('booking-facility').value;
+    const date = document.getElementById('booking-date').value;
+    const start = document.getElementById('booking-start').value;
+    const end = document.getElementById('booking-end').value;
+    const statusEl = document.getElementById('booking-status');
+    if (!date || !start || !end) { statusEl.textContent = 'Date, start time, and end time are required.'; statusEl.className = 'status-msg error'; return; }
+    if (start >= end) { statusEl.textContent = 'End time must be after start time.'; statusEl.className = 'status-msg error'; return; }
+    statusEl.textContent = 'Checking availability...'; statusEl.className = 'status-msg';
+    const { data: available, error: checkErr } = await supabase.rpc('is_facility_available', { p_facility_id: facilityId, p_date: date, p_start: start, p_end: end });
+    if (checkErr) { statusEl.textContent = checkErr.message; statusEl.className = 'status-msg error'; return; }
+    if (!available) { statusEl.textContent = 'That slot isn\'t available — check the list above and try a different time.'; statusEl.className = 'status-msg error'; return; }
+    const { error } = await supabase.from('facility_bookings').insert({
+      org_id: currentOrgId, facility_id: facilityId, requested_by: session.user.id, player_id: player.id,
+      date, start_time: start, end_time: end, purpose: document.getElementById('booking-purpose').value.trim() || null,
+    });
+    if (error) { statusEl.textContent = error.message; statusEl.className = 'status-msg error'; return; }
+    showToast('Booking requested — waiting for approval.', 'ok');
+    const facilityName = facilities.find(f => f.id === facilityId)?.name || 'a facility';
+    notifyOrgCoaches('New facility booking request', `${player.name} requested ${facilityName}, ${start.slice(0, 5)}–${end.slice(0, 5)} on ${date}`, 'panel-facilities');
+    closeSheet();
+    renderMyDashboardFor(player);
+  });
+}
 async function loadMySchedule() {
   const contentEl = document.getElementById('my-schedule-content');
   contentEl.innerHTML = '<div class="empty-state">Loading...</div>';
@@ -6385,6 +6531,7 @@ document.getElementById('save-equipment-btn').addEventListener('click', async ()
 async function loadFacilities() {
   document.getElementById('facilities-add-form').style.display = roleAtLeast('head_coach') ? 'block' : 'none';
   await populateBranchSelect('facility-branch');
+  loadFacilityBookings();
   const listEl = document.getElementById('facilities-list');
   listEl.innerHTML = '<div class="empty-state">Loading...</div>';
   const { data, error } = await supabase.from('facilities').select('*').eq('org_id', currentOrgId).order('name');
@@ -6404,6 +6551,49 @@ async function loadFacilities() {
     const actions = row.querySelector('.actions');
     actions.insertBefore(maintBtn, actions.firstChild);
     return row;
+  });
+}
+async function loadFacilityBookings() {
+  const listEl = document.getElementById('facility-bookings-list');
+  listEl.innerHTML = '<div class="empty-state">Loading...</div>';
+  const { data, error } = await supabase.from('facility_bookings')
+    .select('id, date, start_time, end_time, status, purpose, requested_by, facilities(name), players(name)')
+    .eq('org_id', currentOrgId).eq('status', 'pending').order('date').order('start_time');
+  if (error) { reportError(error, 'Facility bookings'); listEl.innerHTML = `<div class="empty-state">${error.message}</div>`; return; }
+  if (!data.length) { listEl.innerHTML = '<div class="empty-state">No pending booking requests.</div>'; return; }
+  const nameByRequester = await profilesByIds(data.map(b => b.requested_by));
+  const canApprove = roleAtLeast('head_coach');
+  listEl.innerHTML = data.map(b => `<div class="list-item" data-booking-id="${esc(b.id)}">
+    <span><b>${esc(b.facilities?.name || 'Facility')}</b> ${esc(b.start_time.slice(0, 5))}–${esc(b.end_time.slice(0, 5))} · ${esc(b.date)}
+      <div class="muted">${esc(b.players?.name ? 'For ' + b.players.name + ' · ' : '')}Requested by ${esc(nameByRequester[b.requested_by] || 'someone')}${b.purpose ? ' · ' + esc(b.purpose) : ''}</div>
+    </span>
+    ${canApprove ? `<span style="display:flex; gap:6px;"><button class="btn small" data-approve-booking="${esc(b.id)}">Approve</button><button class="btn small danger" data-reject-booking="${esc(b.id)}">Reject</button></span>` : '<span class="role-tag">pending</span>'}
+  </div>`).join('');
+  listEl.querySelectorAll('[data-approve-booking]').forEach(btn => {
+    btn.onclick = async () => {
+      const booking = data.find(b => b.id === btn.dataset.approveBooking);
+      const { data: updated, error } = await supabase.from('facility_bookings')
+        .update({ status: 'confirmed' }).eq('id', booking.id).eq('status', 'pending').select();
+      if (error) { showToast(error.message, 'error'); return; }
+      if (!updated.length) { showToast('This request was already handled — refreshing.', 'error'); loadFacilityBookings(); return; }
+      showToast('Approved.', 'ok');
+      notifyUser(booking.requested_by, 'Facility booking approved', `${booking.facilities?.name || 'Facility'}, ${booking.start_time.slice(0, 5)}–${booking.end_time.slice(0, 5)} on ${booking.date}`, 'panel-my-dashboard');
+      loadFacilityBookings();
+    };
+  });
+  listEl.querySelectorAll('[data-reject-booking]').forEach(btn => {
+    btn.onclick = async () => {
+      const booking = data.find(b => b.id === btn.dataset.rejectBooking);
+      const reason = prompt('Reason for rejecting (optional, shown to the requester):');
+      if (reason === null) return; // cancelled
+      const { data: updated, error } = await supabase.from('facility_bookings')
+        .update({ status: 'rejected', rejection_reason: reason.trim() || null }).eq('id', booking.id).eq('status', 'pending').select();
+      if (error) { showToast(error.message, 'error'); return; }
+      if (!updated.length) { showToast('This request was already handled — refreshing.', 'error'); loadFacilityBookings(); return; }
+      showToast('Rejected.', 'ok');
+      notifyUser(booking.requested_by, 'Facility booking rejected', `${booking.facilities?.name || 'Facility'}, ${booking.start_time.slice(0, 5)}–${booking.end_time.slice(0, 5)} on ${booking.date}${reason.trim() ? ' — ' + reason.trim() : ''}`, 'panel-my-dashboard');
+      loadFacilityBookings();
+    };
   });
 }
 async function openFacilityMaintenanceLog(f) {
@@ -6453,13 +6643,17 @@ function editFacility(f) {
   document.getElementById('facility-capacity').value = f.capacity || '';
   document.getElementById('facility-availability').value = f.availability_notes || '';
   document.getElementById('facility-maintenance').value = f.maintenance_notes || '';
+  document.getElementById('facility-open-time').value = f.open_time ? f.open_time.slice(0, 5) : '';
+  document.getElementById('facility-close-time').value = f.close_time ? f.close_time.slice(0, 5) : '';
+  document.querySelectorAll('.facility-closed-day-cb').forEach(cb => { cb.checked = (f.closed_days || []).includes(cb.value); });
   if (cache.branches.length) document.getElementById('facility-branch').value = f.branch_id || '';
   document.getElementById('save-facility-btn').textContent = 'Save changes';
   document.getElementById('cancel-facility-btn').style.display = 'inline-block';
 }
 document.getElementById('cancel-facility-btn').addEventListener('click', () => {
   editing.facilities = null;
-  ['facility-name', 'facility-capacity', 'facility-availability', 'facility-maintenance'].forEach(id => document.getElementById(id).value = '');
+  ['facility-name', 'facility-capacity', 'facility-availability', 'facility-maintenance', 'facility-open-time', 'facility-close-time'].forEach(id => document.getElementById(id).value = '');
+  document.querySelectorAll('.facility-closed-day-cb').forEach(cb => { cb.checked = false; });
   if (cache.branches.length) document.getElementById('facility-branch').value = '';
   document.getElementById('save-facility-btn').textContent = 'Add facility';
   document.getElementById('cancel-facility-btn').style.display = 'none';
@@ -6473,6 +6667,9 @@ document.getElementById('save-facility-btn').addEventListener('click', async () 
     capacity: document.getElementById('facility-capacity').value.trim() || null,
     availability_notes: document.getElementById('facility-availability').value.trim() || null,
     maintenance_notes: document.getElementById('facility-maintenance').value.trim() || null,
+    open_time: document.getElementById('facility-open-time').value || null,
+    close_time: document.getElementById('facility-close-time').value || null,
+    closed_days: Array.from(document.querySelectorAll('.facility-closed-day-cb:checked')).map(cb => cb.value),
   };
   if (cache.branches.length) row.branch_id = document.getElementById('facility-branch').value || null;
   const { error } = editing.facilities
