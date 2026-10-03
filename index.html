@@ -413,7 +413,7 @@
       <button class="btn small ghost" id="signup-btn">Create test account</button>
     </div>
     <div class="status-msg" id="auth-status"></div>
-    <p style="font-size:11px; color:var(--text-dim); opacity:0.5; margin-top:16px;" id="testing-build-stamp">build 2026-10-03-21:35 (Removed text presets, smaller field hints, Bulk Assess General/T20/ODI/Test single-select)</p>
+    <p style="font-size:11px; color:var(--text-dim); opacity:0.5; margin-top:16px;" id="testing-build-stamp">build 2026-10-03-22:03 (Added Print Diagram to Field Diagram editor)</p>
   </div>
 </div>
 
@@ -1212,7 +1212,7 @@ const SUPABASE_URL = 'https://tjcrpnwmaadfcvdbthaz.supabase.co';
 // instead of silently staying stale. version.json must be redeployed
 // alongside this file on every future update, with a matching bump to
 // APP_BUILD_VERSION below — these two must always move together.
-const APP_BUILD_VERSION = '2026-10-03-21:35';
+const APP_BUILD_VERSION = '2026-10-03-22:03';
 async function checkForUpdate() {
   try {
     const res = await fetch('./version.json', { cache: 'no-store' });
@@ -4037,6 +4037,7 @@ function fieldToolIconSvg(id) {
   if (id === 'copy') return `<svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round"><rect x="8" y="8" width="12" height="12" rx="1.5"/><path d="M5 15.5V5.5A1.5 1.5 0 0 1 6.5 4h10"/></svg>`;
   if (id === 'check') return `<svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.2" stroke-linecap="round" stroke-linejoin="round"><path d="M5 12.5 10 17 19 7"/></svg>`;
   if (id === 'download') return `<svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round"><path d="M12 4v12M7 11l5 5 5-5"/><path d="M5 19.5h14"/></svg>`;
+  if (id === 'printer') return `<svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round"><polyline points="6,9 6,2 18,2 18,9"/><path d="M6 18H4a2 2 0 0 1-2-2v-5a2 2 0 0 1 2-2h16a2 2 0 0 1 2 2v5a2 2 0 0 1-2 2h-2"/><rect x="6" y="14" width="12" height="8"/></svg>`;
   return '';
 }
 // opts.xComp counter-scales a marker's x-extent so it still looks round/upright
@@ -4428,6 +4429,7 @@ function fieldEditorHtml(fullscreen) {
     const undoBtn = `<button type="button" class="btn small ghost" title="Undo" data-action="undoFieldLast">${fieldToolIconSvg('undo')}</button>`;
     const redoBtn = `<button type="button" class="btn small ghost" title="Redo" ${canRedo ? '' : 'disabled'} data-action="redoFieldLast">${fieldToolIconSvg('redo')}</button>`;
     const exportBtn = `<button type="button" class="btn small ghost" title="Export Diagram as Image" data-action="exportFieldDiagram">${fieldToolIconSvg('download')}</button>`;
+    const printBtn = `<button type="button" class="btn small ghost" title="Print Diagram" data-action="printFieldDiagram">${fieldToolIconSvg('printer')}</button>`;
     const clearBtn = `<button type="button" class="btn small danger" title="Clear Drawing" data-action="clearFieldStep">${fieldToolIconSvg('trash')}</button>`;
     // Zoom (for precise placement on a small screen) + pan, fullscreen only.
     const zoomPct = Math.round((fieldDraft.fsZoom || 1) * 100);
@@ -4435,7 +4437,7 @@ function fieldEditorHtml(fullscreen) {
     const zoomLabel = `<div class="btn small ghost" style="width:44px;font-size:11px;pointer-events:none">${zoomPct}%</div>`;
     const zoomInBtn = `<button type="button" class="btn small ghost" title="Zoom In" ${fieldDraft.fsZoom >= FIELD_ZOOM_STEPS[FIELD_ZOOM_STEPS.length - 1] ? 'disabled' : ''} data-action="zoomFieldBy" data-dir="1" style="font-size:18px;font-weight:700">+</button>`;
     const panBtns = (fieldDraft.fsZoom || 1) > 1 ? `<button type="button" class="btn small ghost" title="Pan Up" data-action="panFieldFs" data-dx="0" data-dy="-1" style="font-size:14px">▲</button><button type="button" class="btn small ghost" title="Pan Down" data-action="panFieldFs" data-dx="0" data-dy="1" style="font-size:14px">▼</button><button type="button" class="btn small ghost" title="Pan Left" data-action="panFieldFs" data-dx="-1" data-dy="0" style="font-size:14px">◀</button><button type="button" class="btn small ghost" title="Pan Right" data-action="panFieldFs" data-dx="1" data-dy="0" style="font-size:14px">▶</button>` : '';
-    const toolbar = `<div class="fdFsToolbar">${exitBtn}${stepPills}${addStepBtn}${duplicateStepBtn}${removeStepBtn}${shapeBtns}${toolBtns}${finishArrowBtn}${cancelArrowBtn}${undoBtn}${redoBtn}${exportBtn}${clearBtn}${zoomOutBtn}${zoomLabel}${zoomInBtn}${panBtns}</div>`;
+    const toolbar = `<div class="fdFsToolbar">${exitBtn}${stepPills}${addStepBtn}${duplicateStepBtn}${removeStepBtn}${shapeBtns}${toolBtns}${finishArrowBtn}${cancelArrowBtn}${undoBtn}${redoBtn}${exportBtn}${printBtn}${clearBtn}${zoomOutBtn}${zoomLabel}${zoomInBtn}${panBtns}</div>`;
     // The wrapper's exact pixel width/height is computed and set by
     // sizeFullscreenCanvas() right after this markup is inserted — CSS
     // aspect-ratio inside a flex layout distorts under flex-shrink, so JS
@@ -4465,6 +4467,7 @@ function fieldEditorHtml(fullscreen) {
     <button type="button" class="btn small danger" style="padding:6px 10px;font-size:12px" data-action="clearFieldStep">Clear Step</button>
     <button type="button" class="btn small ghost" style="padding:6px 10px;font-size:12px" data-action="openFieldFullscreen">⛶ Fullscreen</button>
     <button type="button" class="btn small ghost" style="padding:6px 10px;font-size:12px" data-action="exportFieldDiagram">Export Image</button>
+    <button type="button" class="btn small ghost" style="padding:6px 10px;font-size:12px" data-action="printFieldDiagram">Print Diagram</button>
     <button type="button" class="btn small ghost" style="padding:6px 10px;font-size:12px" data-action="suggestDrillEquipment">Suggest Equipment</button>
    </div>`;
   return `${controlsHtml}<div class="fd-canvas-wrap">${fieldDiagramSvg(view, { interactive: true })}</div>${bottomBar}`;
@@ -4493,6 +4496,7 @@ function wireFieldEditor(container) {
       else if (action === 'finishFieldArrow') finishFieldArrow();
       else if (action === 'cancelFieldArrow') cancelFieldArrow();
       else if (action === 'exportFieldDiagram') exportFieldDiagram();
+      else if (action === 'printFieldDiagram') printFieldDiagram();
       else if (action === 'suggestDrillEquipment') suggestDrillEquipment();
       else if (action === 'zoomFieldBy') zoomFieldBy(parseInt(el.getAttribute('data-dir'), 10));
       else if (action === 'panFieldFs') panFieldFs(parseFloat(el.getAttribute('data-dx')), parseFloat(el.getAttribute('data-dy')));
@@ -4775,6 +4779,29 @@ function exportFieldDiagram() {
     }, 'image/png');
   };
   img.src = url;
+}
+// Print Diagram: renders the current step's ground through the app's shared
+// branded print template (#print-area / printWithBranding — the same one
+// used for certificates and match scorecards) and opens the browser's print
+// dialog, so a coach can hand a paper copy to players pitch-side without
+// first exporting a PNG and printing that separately.
+async function printFieldDiagram() {
+  const step = fieldDraft.steps[fieldDraft.activeStep];
+  if (!step) { showToast('No diagram to print.', 'error'); return; }
+  const shape = curFieldShape(step);
+  const items = curFieldItems(step);
+  if (!items.length) { showToast("This step's diagram is empty — add some markers first.", 'error'); return; }
+  const nameInput = document.getElementById('drill-name');
+  const drillName = (nameInput && nameInput.value.trim()) || 'Drill Diagram';
+  const stepLabel = step.label || `Step ${fieldDraft.activeStep + 1}`;
+  const stepNote = fieldDraft.steps.length > 1 ? ` (step ${fieldDraft.activeStep + 1} of ${fieldDraft.steps.length})` : '';
+  const svgStr = fieldDiagramSvg({ shape, items }, {});
+  const html = `
+    <div style="font-size:16px; font-weight:700; margin-bottom:2px;">${esc(drillName)}</div>
+    <div style="font-size:13px; color:#555; margin-bottom:14px;">${esc(stepLabel)}${esc(stepNote)}</div>
+    <div style="max-width:420px; margin:0 auto;">${svgStr}</div>
+  `;
+  await printWithBranding('Drill Diagram', html);
 }
 // Debounced autosave: keeps the in-progress field diagram backed up to
 // localStorage (device-local, same as the single-coach app's own db-backed
